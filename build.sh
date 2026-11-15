@@ -1,11 +1,11 @@
 #!/bin/zsh
-# Builds a universal (Apple Silicon + Intel) UsageRings.app.
+# Builds a universal (Apple Silicon + Intel) Headroom.app.
 #   ./build.sh        build and launch; the app installs itself to ~/Applications + login item
-#   ./build.sh dist   build and zip dist/UsageRings.zip (just the app) to send to someone
+#   ./build.sh dist   build and zip dist/Headroom.zip (just the app) to send to someone
 set -euo pipefail
 cd "$(dirname "$0")"
 
-NAME=UsageRings
+NAME=Headroom
 APP=dist/$NAME.app
 TMP=$(mktemp -d)
 
@@ -26,7 +26,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>CFBundleName</key><string>$NAME</string>
   <key>CFBundleExecutable</key><string>$NAME</string>
   <key>CFBundlePackageType</key><string>APPL</string>
-  <key>CFBundleShortVersionString</key><string>1.4</string>
+  <key>CFBundleShortVersionString</key><string>1.5</string>
   <key>LSUIElement</key><true/>
   <key>LSMinimumSystemVersion</key><string>13.0</string>
 </dict></plist>
@@ -42,6 +42,6 @@ fi
 open "$APP"   # copies itself to ~/Applications, registers login item, relaunches
 echo "Launched; it installs itself to ~/Applications"
 
-# Retired: the separate Codex widget (merged into UsageRings).
+# Retired: the separate Codex widget (merged into UsageRings, now Headroom).
 pkill -x CodexRings 2>/dev/null || true
 rm -rf "$HOME/Applications/CodexRings.app" "$HOME/Library/LaunchAgents/local.codexrings.plist"

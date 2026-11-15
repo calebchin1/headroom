@@ -13,13 +13,13 @@ jobs:
       - name: Install, check it stays up, screenshot
         shell: powershell
         run: |
-          $env:USAGERINGS_SRC = "$pwd\windows\UsageRings.cs"
-          $env:USAGERINGS_DEMO = "$pwd\windows\demo"
+          $env:HEADROOM_SRC = "$pwd\windows\Headroom.cs"
+          $env:HEADROOM_DEMO = "$pwd\windows\demo"
           .\install.ps1
-          if (-not (Test-Path "$env:LOCALAPPDATA\UsageRings\UsageRings.exe")) { throw 'exe not built' }
-          if (-not (Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run').UsageRings) { throw 'no startup entry' }
+          if (-not (Test-Path "$env:LOCALAPPDATA\Headroom\Headroom.exe")) { throw 'exe not built' }
+          if (-not (Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run').Headroom) { throw 'no startup entry' }
           Start-Sleep 8
-          if (-not (Get-Process UsageRings -ErrorAction SilentlyContinue)) { throw 'UsageRings exited' }
+          if (-not (Get-Process Headroom -ErrorAction SilentlyContinue)) { throw 'Headroom exited' }
           Add-Type -AssemblyName System.Windows.Forms, System.Drawing
           $b = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
           $bmp = New-Object System.Drawing.Bitmap $b.Width, $b.Height

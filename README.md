@@ -1,6 +1,6 @@
-# UsageRings
+# Headroom
 
-<p align="center"><img src="docs/widget.png" width="720" alt="UsageRings widget showing Claude and Codex usage rings"></p>
+<p align="center"><img src="docs/widget.png" width="720" alt="Headroom widget showing Claude and Codex usage rings"></p>
 
 A small floating macOS and Windows widget that shows how much of your **Claude Code** and **Codex** plan limits you've used — session and weekly — as rings. Refreshes every 5 minutes and turns red past 90%.
 
@@ -16,7 +16,7 @@ A small floating macOS and Windows widget that shows how much of your **Claude C
 **2. Paste this and press <kbd>Return</kbd>:**
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/calebchin1/usage-rings/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/calebchin1/headroom/main/install.sh | sh
 ```
 
 <img src="docs/step2-run-command.svg" width="640" alt="Terminal running the install command">
@@ -33,12 +33,12 @@ The script ([read it here](install.sh)) downloads the latest release, and the ap
 
 ### Uninstall
 
-Right-click the widget → **Uninstall UsageRings…**
+Right-click the widget → **Uninstall Headroom…**
 
 <details>
 <summary>Install without Terminal</summary>
 
-[Download UsageRings.zip](https://github.com/calebchin1/usage-rings/releases/latest/download/UsageRings.zip), unzip, and double-click **UsageRings.app**. macOS will block it the first time because the app isn't notarized: go to **System Settings → Privacy &amp; Security**, scroll down, click **Open Anyway**, and confirm.
+[Download Headroom.zip](https://github.com/calebchin1/headroom/releases/latest/download/Headroom.zip), unzip, and double-click **Headroom.app**. macOS will block it the first time because the app isn't notarized: go to **System Settings → Privacy &amp; Security**, scroll down, click **Open Anyway**, and confirm.
 </details>
 
 ## Install on Windows
@@ -46,12 +46,12 @@ Right-click the widget → **Uninstall UsageRings…**
 Press <kbd>Win</kbd>, type **PowerShell**, press <kbd>Enter</kbd>, then paste this and press <kbd>Enter</kbd>:
 
 ```powershell
-irm https://raw.githubusercontent.com/calebchin1/usage-rings/main/install.ps1 | iex
+irm https://raw.githubusercontent.com/calebchin1/headroom/main/install.ps1 | iex
 ```
 
-The widget appears in the top-right and starts automatically when you log in. The script ([read it here](install.ps1)) downloads [the source](windows/UsageRings.cs) and builds it with the C# compiler that comes with Windows, so there's no `.exe` download and no SmartScreen prompt. It installs to `%LOCALAPPDATA%\UsageRings`. No admin needed.
+The widget appears in the top-right and starts automatically when you log in. The script ([read it here](install.ps1)) downloads [the source](windows/Headroom.cs) and builds it with the C# compiler that comes with Windows, so there's no `.exe` download and no SmartScreen prompt. It installs to `%LOCALAPPDATA%\Headroom`. No admin needed.
 
-Click, drag and right-click work the same as on Mac. The Windows version doesn't have the Opacity or Glass menus yet. To uninstall, right-click → **Uninstall UsageRings…**
+Click, drag and right-click work the same as on Mac. The Windows version doesn't have the Opacity or Glass menus yet. To uninstall, right-click → **Uninstall Headroom…**
 
 ## Requirements
 
@@ -69,7 +69,7 @@ Needs the Xcode Command Line Tools (`xcode-select --install`).
 
 ```sh
 ./build.sh        # build universal app and launch it (it installs itself)
-./build.sh dist   # build dist/UsageRings.zip for sharing
+./build.sh dist   # build dist/Headroom.zip for sharing
 ```
 
 ## License

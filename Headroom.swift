@@ -662,7 +662,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         m.addItem(gl)
         m.addItem(withTitle: "Open \(state.selected.name) Usage Page", action: #selector(openUsage), keyEquivalent: "").target = self
         m.addItem(.separator())
-        m.addItem(withTitle: "Uninstall UsageRings…", action: #selector(uninstall), keyEquivalent: "").target = self
+        m.addItem(withTitle: "Uninstall Headroom…", action: #selector(uninstall), keyEquivalent: "").target = self
         m.addItem(withTitle: "Quit", action: #selector(quit), keyEquivalent: "q").target = self
         NSMenu.popUpContextMenu(m, with: e, for: panel.contentView!)
     }
@@ -687,7 +687,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc func quit() { NSApp.terminate(nil) }
     @objc func uninstall() {
         let a = NSAlert()
-        a.messageText = "Uninstall UsageRings?"
+        a.messageText = "Uninstall Headroom?"
         a.informativeText = "Removes the app, its login item and its settings."
         a.addButton(withTitle: "Uninstall")
         a.addButton(withTitle: "Cancel")
@@ -704,15 +704,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 /// to ~/Applications, registers a login item, relaunches the copy and quits.
 @MainActor
 enum Installer {
+    /// Bundle ID kept from the UsageRings days so upgrades replace the old app, its login item and settings.
     static let id = Bundle.main.bundleIdentifier ?? "local.usagerings"
     static var fm: FileManager { .default }
-    static var dest: URL { fm.homeDirectoryForCurrentUser.appendingPathComponent("Applications/UsageRings.app") }
+    static var dest: URL { fm.homeDirectoryForCurrentUser.appendingPathComponent("Applications/Headroom.app") }
+    static var oldDest: URL { fm.homeDirectoryForCurrentUser.appendingPathComponent("Applications/UsageRings.app") }
     static var agent: URL { fm.homeDirectoryForCurrentUser.appendingPathComponent("Library/LaunchAgents/\(id).plist") }
 
     /// true = we're the installed copy, carry on; false = a relaunch is under way, stop.
     static func ensureInstalled() -> Bool {
         let here = Bundle.main.bundleURL.resolvingSymlinksInPath().standardizedFileURL
         if here.path == dest.resolvingSymlinksInPath().standardizedFileURL.path || here.pathExtension != "app" {
+            if fm.fileExists(atPath: oldDest.path) { try? fm.trashItem(at: oldDest, resultingItemURL: nil) }   // pre-rename copy
             writeLoginItem()
             return true
         }

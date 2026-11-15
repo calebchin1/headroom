@@ -1,4 +1,4 @@
-// UsageRings for Windows: floating widget showing Claude Code and Codex plan usage as rings.
+// Headroom for Windows: floating widget showing Claude Code and Codex plan usage as rings.
 // Written in C# 5 so it compiles with the csc.exe that ships with .NET Framework 4.x on every
 // Windows 10/11 machine; install.ps1 compiles it in place. No XAML, no NuGet, no SDK.
 using System;
@@ -22,10 +22,10 @@ using System.Windows.Shapes;
 using System.Windows.Threading;
 using Microsoft.Win32;
 
-[assembly: System.Reflection.AssemblyTitle("UsageRings")]
-[assembly: System.Reflection.AssemblyVersion("1.4.0.0")]
+[assembly: System.Reflection.AssemblyTitle("Headroom")]
+[assembly: System.Reflection.AssemblyVersion("1.5.0.0")]
 
-namespace UsageRings
+namespace Headroom
 {
     // MARK: - Model
 
@@ -109,8 +109,8 @@ namespace UsageRings
         public static List<Limit> Fetch(Provider p)
         {
             var app = p == Provider.Claude ? "Claude Code" : "Codex";
-            // USAGERINGS_DEMO=<dir with claude.json / codex.json>: render canned responses (CI screenshots).
-            var demo = Environment.GetEnvironmentVariable("USAGERINGS_DEMO");
+            // HEADROOM_DEMO=<dir with claude.json / codex.json>: render canned responses (CI screenshots).
+            var demo = Environment.GetEnvironmentVariable("HEADROOM_DEMO");
             if (!string.IsNullOrEmpty(demo))
             {
                 var d = ReadJson(System.IO.Path.Combine(demo, p == Provider.Claude ? "claude.json" : "codex.json"));
@@ -316,11 +316,11 @@ namespace UsageRings
         }
     }
 
-    // MARK: - Settings (HKCU\Software\UsageRings)
+    // MARK: - Settings (HKCU\Software\Headroom)
 
     static class Settings
     {
-        const string KeyPath = @"Software\UsageRings";
+        const string KeyPath = @"Software\Headroom";
         public static string Get(string name)
         {
             using (var k = Registry.CurrentUser.OpenSubKey(KeyPath)) return k == null ? null : k.GetValue(name) as string;
@@ -335,7 +335,7 @@ namespace UsageRings
             try
             {
                 using (var k = Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run", true))
-                    if (k != null) k.DeleteValue("UsageRings", false);
+                    if (k != null) k.DeleteValue("Headroom", false);
             }
             catch { }
         }
@@ -381,7 +381,7 @@ namespace UsageRings
 
         public Widget()
         {
-            Title = "UsageRings";
+            Title = "Headroom";
             WindowStyle = WindowStyle.None;
             AllowsTransparency = true;
             Background = Brushes.Transparent;
@@ -629,7 +629,7 @@ namespace UsageRings
                 try { Process.Start(new ProcessStartInfo(P.UsageUrl(selected)) { UseShellExecute = true }); } catch { }
             });
             m.Items.Add(new Separator());
-            Add(m, "Uninstall UsageRings…", Uninstall);
+            Add(m, "Uninstall Headroom…", Uninstall);
             Add(m, "Quit", () => Application.Current.Shutdown());
             m.PlacementTarget = root;
             m.IsOpen = true;
@@ -644,13 +644,13 @@ namespace UsageRings
 
         void Uninstall()
         {
-            var r = MessageBox.Show(this, "Removes the app, its startup entry and its settings.", "Uninstall UsageRings?",
+            var r = MessageBox.Show(this, "Removes the app, its startup entry and its settings.", "Uninstall Headroom?",
                                     MessageBoxButton.OKCancel, MessageBoxImage.Question);
             if (r != MessageBoxResult.OK) return;
             Settings.DeleteAll();
             var dir = AppDomain.CurrentDomain.BaseDirectory.TrimEnd('\\');
             // Can't delete our own running exe; a hidden cmd does it once we've exited.
-            if (System.IO.Path.GetFileName(dir).Equals("UsageRings", StringComparison.OrdinalIgnoreCase))
+            if (System.IO.Path.GetFileName(dir).Equals("Headroom", StringComparison.OrdinalIgnoreCase))
             {
                 try
                 {
@@ -680,7 +680,7 @@ namespace UsageRings
             // .NET Framework defaults to TLS 1.0 for exes without a target-framework attribute.
             ServicePointManager.SecurityProtocol = (SecurityProtocolType)3072 | (SecurityProtocolType)768;
             bool fresh;
-            using (var mutex = new Mutex(true, @"Local\UsageRings", out fresh))
+            using (var mutex = new Mutex(true, @"Local\Headroom", out fresh))
             {
                 if (!fresh) return;
                 var app = new Application { ShutdownMode = ShutdownMode.OnMainWindowClose };
