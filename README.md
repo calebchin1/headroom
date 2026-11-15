@@ -10,16 +10,13 @@ A small floating macOS widget that shows how much of your **Claude Code** and **
 
 ## Install
 
-1. Download `UsageRings.zip` from [Releases](../../releases/latest) and unzip it.
-2. In Terminal:
-   ```sh
-   cd ~/Downloads/UsageRings
-   zsh install.sh
-   ```
+1. **[Download UsageRings.zip](https://github.com/calebchin1/usage-rings/releases/latest/download/UsageRings.zip)** and double-click it to unzip.
+2. Double-click **UsageRings.app**.
+3. macOS will say it can't verify the app (it isn't notarized). Open **System Settings → Privacy & Security**, scroll down, click **Open Anyway**, and confirm.
 
-It installs to `~/Applications` and starts at login. The app isn't notarized, so `install.sh` clears the download quarantine flag for it.
+That's it — the app moves itself to `~/Applications`, starts at login, and appears top-right. You can delete the downloaded copy.
 
-**Uninstall:** `zsh uninstall.sh` from the same folder.
+**Uninstall:** right-click the widget → **Uninstall UsageRings…**
 
 ## Requirements
 
@@ -36,7 +33,7 @@ Your login never leaves your Mac except to go to Anthropic or OpenAI. The app re
 Needs the Xcode Command Line Tools (`xcode-select --install`).
 
 ```sh
-./build.sh        # build universal app, install, start at login
+./build.sh        # build universal app and launch it (it installs itself)
 ./build.sh dist   # build dist/UsageRings.zip for sharing
 ```
 

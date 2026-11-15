@@ -524,6 +524,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var animatingUntil = Date.distantPast
 
     func applicationDidFinishLaunching(_ n: Notification) {
+        guard Installer.ensureInstalled() else { return }   // relaunching from ~/Applications
         panel = FloatingPanel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         panel.level = .floating
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
@@ -643,6 +644,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         m.addItem(op)
         m.addItem(withTitle: "Open \(state.selected.name) Usage Page", action: #selector(openUsage), keyEquivalent: "").target = self
         m.addItem(.separator())
+        m.addItem(withTitle: "Uninstall UsageRings…", action: #selector(uninstall), keyEquivalent: "").target = self
         m.addItem(withTitle: "Quit", action: #selector(quit), keyEquivalent: "q").target = self
         NSMenu.popUpContextMenu(m, with: e, for: panel.contentView!)
     }
@@ -656,6 +658,79 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
     @objc func openUsage() { NSWorkspace.shared.open(state.selected.usageURL) }
     @objc func quit() { NSApp.terminate(nil) }
+    @objc func uninstall() {
+        let a = NSAlert()
+        a.messageText = "Uninstall UsageRings?"
+        a.informativeText = "Removes the app, its login item and its settings."
+        a.addButton(withTitle: "Uninstall")
+        a.addButton(withTitle: "Cancel")
+        NSApp.activate(ignoringOtherApps: true)
+        guard a.runModal() == .alertFirstButtonReturn else { return }
+        Installer.uninstall()
+        NSApp.terminate(nil)
+    }
+}
+
+// MARK: - Self-install
+
+/// Double-click install: on first launch from anywhere (e.g. Downloads) the app copies itself
+/// to ~/Applications, registers a login item, relaunches the copy and quits.
+@MainActor
+enum Installer {
+    static let id = Bundle.main.bundleIdentifier ?? "local.usagerings"
+    static var fm: FileManager { .default }
+    static var dest: URL { fm.homeDirectoryForCurrentUser.appendingPathComponent("Applications/UsageRings.app") }
+    static var agent: URL { fm.homeDirectoryForCurrentUser.appendingPathComponent("Library/LaunchAgents/\(id).plist") }
+
+    /// true = we're the installed copy, carry on; false = a relaunch is under way, stop.
+    static func ensureInstalled() -> Bool {
+        let here = Bundle.main.bundleURL.resolvingSymlinksInPath().standardizedFileURL
+        if here.path == dest.resolvingSymlinksInPath().standardizedFileURL.path || here.pathExtension != "app" {
+            writeLoginItem()
+            return true
+        }
+        // Replace any copy that's already running/installed.
+        for a in NSRunningApplication.runningApplications(withBundleIdentifier: id) where a != .current { a.forceTerminate() }
+        do {
+            try fm.createDirectory(at: dest.deletingLastPathComponent(), withIntermediateDirectories: true)
+            if fm.fileExists(atPath: dest.path) { try fm.removeItem(at: dest) }
+            try fm.copyItem(at: here, to: dest)
+        } catch {
+            writeLoginItem()   // can't install (permissions?) — just run from where we are
+            return true
+        }
+        let x = Process()
+        x.executableURL = URL(fileURLWithPath: "/usr/bin/xattr")
+        x.arguments = ["-dr", "com.apple.quarantine", dest.path]
+        try? x.run(); x.waitUntilExit()
+
+        let cfg = NSWorkspace.OpenConfiguration()
+        cfg.createsNewApplicationInstance = true
+        NSWorkspace.shared.openApplication(at: dest, configuration: cfg) { _, err in
+            DispatchQueue.main.async {
+                if err == nil { NSApp.terminate(nil) }
+            }
+        }
+        return false
+    }
+
+    static func writeLoginItem() {
+        let plist: [String: Any] = [
+            "Label": id,
+            "ProgramArguments": ["/usr/bin/open", "-a", dest.path],
+            "RunAtLoad": true,
+        ]
+        guard let data = try? PropertyListSerialization.data(fromPropertyList: plist, format: .xml, options: 0),
+              (try? Data(contentsOf: agent)) != data else { return }
+        try? fm.createDirectory(at: agent.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try? data.write(to: agent)
+    }
+
+    static func uninstall() {
+        try? fm.removeItem(at: agent)
+        UserDefaults.standard.removePersistentDomain(forName: id)
+        try? fm.trashItem(at: Bundle.main.bundleURL, resultingItemURL: nil)
+    }
 }
 
 MainActor.assumeIsolated {
