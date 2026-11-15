@@ -38,7 +38,9 @@ if ($LASTEXITCODE -ne 0 -or -not (Test-Path $Exe)) {
 }
 
 Write-Host '-> Adding to startup...'
-Set-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -Name UsageRings -Value "`"$Exe`""
+$run = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
+if (-not (Test-Path $run)) { New-Item -Path $run -Force | Out-Null }
+Set-ItemProperty $run -Name UsageRings -Value "`"$Exe`""
 Start-Process $Exe
 
 Write-Host 'Done! Look for the widget in the top-right of your screen.' -ForegroundColor Green
