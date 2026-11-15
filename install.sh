@@ -7,7 +7,7 @@ set -e
 
 URL="https://github.com/calebchin1/usage-rings/releases/latest/download/UsageRings.zip"
 
-[ "$(uname)" = "Darwin" ] || { echo "UsageRings is a macOS app."; exit 1; }
+[ "$(uname)" = "Darwin" ] || { echo "This installer is for macOS. On Windows, run this in PowerShell:"; echo "  irm https://raw.githubusercontent.com/calebchin1/usage-rings/main/install.ps1 | iex"; exit 1; }
 major=$(sw_vers -productVersion | cut -d. -f1)
 [ "$major" -ge 13 ] || { echo "UsageRings needs macOS 13 or newer (you have $(sw_vers -productVersion))."; exit 1; }
 

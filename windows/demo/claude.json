@@ -1,0 +1,5 @@
+{"five_hour":{"utilization":42.0,"resets_at":"2030-01-01T03:12:00.000000+00:00"},
+ "limits":[
+  {"kind":"five_hour","group":"session","percent":42,"resets_at":"2030-01-01T03:12:00Z"},
+  {"kind":"weekly_all","group":"weekly","percent":78.5,"resets_at":"2030-01-04T10:00:00Z"},
+  {"kind":"weekly_model","group":"weekly","percent":93,"scope":{"model":{"display_name":"Opus"}},"resets_at":"2030-01-04T10:00:00Z"}]}
