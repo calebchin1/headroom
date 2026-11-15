@@ -29,7 +29,7 @@ The script ([read it here](install.sh)) downloads the latest release, and the ap
 
 - **Click** the widget to switch between Claude and Codex
 - **Drag** to move it anywhere
-- **Right-click** for Refresh, Opacity, the usage page, and Quit
+- **Right-click** for Refresh, Opacity, Glass (Clear · Glass · Frosted), the usage page, and Quit
 
 ### Uninstall
 

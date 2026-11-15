@@ -31,6 +31,14 @@ enum Provider: String, CaseIterable {
     }
 }
 
+/// Right-click → Glass. `.hudWindow` is the most see-through dark material; `.fullScreenUI` is the original heavy frost.
+enum GlassStyle: String, CaseIterable {
+    case clear, glass, frosted
+    var title: String { rawValue.capitalized }
+    var material: NSVisualEffectView.Material { self == .frosted ? .fullScreenUI : .hudWindow }
+    var alpha: CGFloat { switch self { case .clear: return 0.55; case .glass: return 0.80; case .frosted: return 0.72 } }
+}
+
 enum Severity {
     case normal, warning, critical
     init(_ p: Double) {
@@ -538,10 +546,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let fx = VisualEffectHost()
         // Blur sits in its own layer at reduced alpha so the desktop reads through more clearly;
         // the rings stay at full opacity above it.
-        blur.material = .fullScreenUI
         blur.blendingMode = .behindWindow
         blur.state = .active
-        blur.alphaValue = 0.72
+        applyGlass(GlassStyle(rawValue: defaults.string(forKey: "glass") ?? "") ?? .glass)
         blur.maskImage = glassMask()
         blur.frame = fx.bounds
         blur.autoresizingMask = [.width, .height]
@@ -642,6 +649,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         op.submenu = sub
         m.addItem(op)
+        let gl = NSMenuItem(title: "Glass", action: nil, keyEquivalent: "")
+        let gsub = NSMenu()
+        let current = GlassStyle(rawValue: defaults.string(forKey: "glass") ?? "") ?? .glass
+        for g in GlassStyle.allCases {
+            let i = NSMenuItem(title: g.title, action: #selector(setGlass(_:)), keyEquivalent: "")
+            i.target = self; i.representedObject = g.rawValue
+            i.state = g == current ? .on : .off
+            gsub.addItem(i)
+        }
+        gl.submenu = gsub
+        m.addItem(gl)
         m.addItem(withTitle: "Open \(state.selected.name) Usage Page", action: #selector(openUsage), keyEquivalent: "").target = self
         m.addItem(.separator())
         m.addItem(withTitle: "Uninstall UsageRings…", action: #selector(uninstall), keyEquivalent: "").target = self
@@ -655,6 +673,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let v = s.representedObject as! Double
         panel.alphaValue = v
         defaults.set(v, forKey: "opacity")
+    }
+    @objc func setGlass(_ s: NSMenuItem) {
+        guard let g = GlassStyle(rawValue: s.representedObject as? String ?? "") else { return }
+        applyGlass(g)
+        defaults.set(g.rawValue, forKey: "glass")
+    }
+    func applyGlass(_ g: GlassStyle) {
+        blur.material = g.material
+        blur.alphaValue = g.alpha
     }
     @objc func openUsage() { NSWorkspace.shared.open(state.selected.usageURL) }
     @objc func quit() { NSApp.terminate(nil) }
