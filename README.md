@@ -1,22 +1,45 @@
 # UsageRings
 
-A small floating macOS widget that shows how much of your **Claude Code** and **Codex** plan limits you've used — session and weekly — as rings.
+<p align="center"><img src="docs/widget.png" width="720" alt="UsageRings widget showing Claude and Codex usage rings"></p>
 
-- Click to switch between Claude and Codex
-- Drag to move · right-click for refresh, opacity, and the usage page
-- Refreshes every 5 minutes; turns red past 90%
+A small floating macOS widget that shows how much of your **Claude Code** and **Codex** plan limits you've used — session and weekly — as rings. Refreshes every 5 minutes and turns red past 90%.
+
 
 > **Unofficial.** Not affiliated with Anthropic or OpenAI. It reads the same usage endpoints the official tools use, which aren't public APIs — they can change at any time and break this.
 
-## Install
+## Install (30 seconds)
 
-1. **[Download UsageRings.zip](https://github.com/calebchin1/usage-rings/releases/latest/download/UsageRings.zip)** and double-click it to unzip.
-2. Double-click **UsageRings.app**.
-3. macOS will say it can't verify the app (it isn't notarized). Open **System Settings → Privacy & Security**, scroll down, click **Open Anyway**, and confirm.
+**1. Open Terminal.** Press <kbd>⌘ Command</kbd> + <kbd>Space</kbd>, type **Terminal**, press <kbd>Return</kbd>.
 
-That's it — the app moves itself to `~/Applications`, starts at login, and appears top-right. You can delete the downloaded copy.
+<img src="docs/step1-open-terminal.svg" width="640" alt="Spotlight search with Terminal typed in">
 
-**Uninstall:** right-click the widget → **Uninstall UsageRings…**
+**2. Paste this and press <kbd>Return</kbd>:**
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/calebchin1/usage-rings/main/install.sh | sh
+```
+
+<img src="docs/step2-run-command.svg" width="640" alt="Terminal running the install command">
+
+**3. Done.** The widget appears in the top-right of your screen and starts automatically when you log in. You can close Terminal.
+
+The script ([read it here](install.sh)) downloads the latest release, and the app moves itself into `~/Applications`. No password, no security prompts.
+
+### Using it
+
+- **Click** the widget to switch between Claude and Codex
+- **Drag** to move it anywhere
+- **Right-click** for Refresh, Opacity, the usage page, and Quit
+
+### Uninstall
+
+Right-click the widget → **Uninstall UsageRings…**
+
+<details>
+<summary>Install without Terminal</summary>
+
+[Download UsageRings.zip](https://github.com/calebchin1/usage-rings/releases/latest/download/UsageRings.zip), unzip, and double-click **UsageRings.app**. macOS will block it the first time because the app isn't notarized: go to **System Settings → Privacy &amp; Security**, scroll down, click **Open Anyway**, and confirm.
+</details>
 
 ## Requirements
 

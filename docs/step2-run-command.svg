@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="720" height="290" viewBox="0 0 720 290" font-family="'SF Mono', Menlo, Monaco, Consolas, monospace">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#2a2e4d"/><stop offset="1" stop-color="#5c3850"/>
+    </linearGradient>
+    <filter id="sh" x="-10%" y="-10%" width="120%" height="130%"><feDropShadow dx="0" dy="10" stdDeviation="14" flood-opacity="0.45"/></filter>
+  </defs>
+  <rect width="720" height="290" rx="16" fill="url(#bg)"/>
+
+  <g filter="url(#sh)">
+    <rect x="30" y="26" width="660" height="238" rx="12" fill="#1c1c1f" stroke="#ffffff22"/>
+  </g>
+  <!-- title bar -->
+  <path d="M30 38 a12 12 0 0 1 12 -12 h636 a12 12 0 0 1 12 12 v18 h-660 z" fill="#2c2c30"/>
+  <circle cx="52" cy="41" r="6" fill="#ff5f57"/><circle cx="72" cy="41" r="6" fill="#febc2e"/><circle cx="92" cy="41" r="6" fill="#28c840"/>
+  <text x="360" y="45" font-size="12" fill="#ffffff88" text-anchor="middle" font-family="-apple-system, 'Helvetica Neue', Arial, sans-serif">Terminal</text>
+
+  <g font-size="13.2">
+    <text x="48" y="88" fill="#8be28b">~ %</text>
+    <text x="84" y="88" fill="#ffffff">curl -fsSL https://raw.githubusercontent.com/calebchin1/</text>
+    <text x="84" y="108" fill="#ffffff">usage-rings/main/install.sh | sh</text>
+    <rect x="48" y="118" width="624" height="1" fill="#ffffff10"/>
+    <text x="48" y="144" fill="#9ecbff">→ Downloading UsageRings…</text>
+    <text x="48" y="166" fill="#9ecbff">→ Installing to ~/Applications…</text>
+    <text x="48" y="188" fill="#8be28b">✓ Done! Look for the widget in the top-right of your screen.</text>
+    <text x="48" y="210" fill="#ffffff99">  Click it to switch Claude/Codex · drag to move · right-click…</text>
+    <text x="48" y="240" fill="#8be28b">~ %</text>
+    <rect x="84" y="228" width="8" height="15" fill="#ffffffcc"/>
+  </g>
+</svg>
