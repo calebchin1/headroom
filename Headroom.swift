@@ -1,4 +1,6 @@
 import AppKit
+import IOKit
+import IOKit.hid
 import SwiftUI
 
 // MARK: - Model
@@ -8,26 +10,74 @@ struct Limit: Identifiable, Equatable {
     let label: String
     let percent: Double
     let resetsAt: Date?
-    init(id: String, label: String, percent: Double, resetsAt: Date?) {
-        self.id = id; self.label = label
+    var detail: String? = nil   // shown under the label instead of the reset countdown
+    var level: Severity? = nil  // overrides the percent-based severity (memory uses kernel pressure instead)
+    init(id: String, label: String, percent: Double, resetsAt: Date?, detail: String? = nil) {
+        self.id = id; self.label = label; self.detail = detail
         self.percent = percent.isFinite ? min(max(percent, 0), 999) : 0   // Int() traps on inf/NaN/huge
         self.resetsAt = resetsAt
     }
 }
 
-/// Both providers live in one widget; a click swaps which one is showing.
+/// Claude and Codex share the main widget (a click swaps them); System (this Mac's memory and CPU) has its own panel.
 enum Provider: String, CaseIterable {
-    case claude, codex
+    case claude, codex, system
     var other: Provider { self == .claude ? .codex : .claude }
 
-    var name: String { self == .claude ? "Claude" : "Codex" }
-    /// Brand colours: Claude terracotta, OpenAI/ChatGPT green.
+    var name: String { self == .claude ? "Claude" : (self == .codex ? "Codex" : "System") }
+    /// Brand colours: Claude terracotta, OpenAI/ChatGPT green, macOS blue for the system page.
     var brand: Color {
-        self == .claude ? Color(red: 0xD9 / 255, green: 0x77 / 255, blue: 0x57 / 255)
-                        : Color(red: 0x10 / 255, green: 0xA3 / 255, blue: 0x7F / 255)
+        switch self {
+        case .claude: return Color(red: 0xD9 / 255, green: 0x77 / 255, blue: 0x57 / 255)
+        case .codex: return Color(red: 0x10 / 255, green: 0xA3 / 255, blue: 0x7F / 255)
+        case .system: return Color(red: 0x4F / 255, green: 0xA8 / 255, blue: 0xFF / 255)
+        }
     }
     var usageURL: URL {
-        URL(string: self == .claude ? "https://claude.ai/settings/usage" : "https://chatgpt.com/codex/settings/usage")!
+        switch self {
+        case .claude: return URL(string: "https://claude.ai/settings/usage")!
+        case .codex: return URL(string: "https://chatgpt.com/codex/settings/usage")!
+        case .system: return URL(fileURLWithPath: "/System/Applications/Utilities/Activity Monitor.app")
+        }
+    }
+    var usageTitle: String { self == .system ? "Open Activity Monitor" : "Open \(name) Usage Page" }
+}
+
+/// Memory and CPU straight from the kernel: two Mach calls per sample, no subprocesses, nothing retained.
+enum SystemStats {
+    static let host = mach_host_self()
+
+    /// Same sum Activity Monitor calls "Memory Used": app + wired + compressed.
+    static func memory() -> (used: Double, total: Double)? {
+        var s = vm_statistics64()
+        var n = mach_msg_type_number_t(MemoryLayout<vm_statistics64>.size / MemoryLayout<integer_t>.size)
+        let kr = withUnsafeMutablePointer(to: &s) {
+            $0.withMemoryRebound(to: integer_t.self, capacity: Int(n)) { host_statistics64(host, HOST_VM_INFO64, $0, &n) }
+        }
+        guard kr == KERN_SUCCESS else { return nil }
+        var page: vm_size_t = 0
+        host_page_size(host, &page)
+        let pages = Double(s.internal_page_count) - Double(s.purgeable_count) + Double(s.wire_count) + Double(s.compressor_page_count)
+        return (max(pages, 0) * Double(page), Double(ProcessInfo.processInfo.physicalMemory))
+    }
+
+    /// Cumulative (user, system, idle, nice) ticks across all cores; usage is the delta between two reads.
+    static func cpuTicks() -> [UInt32]? {
+        var s = host_cpu_load_info()
+        var n = mach_msg_type_number_t(MemoryLayout<host_cpu_load_info>.size / MemoryLayout<integer_t>.size)
+        let kr = withUnsafeMutablePointer(to: &s) {
+            $0.withMemoryRebound(to: integer_t.self, capacity: Int(n)) { host_statistics(host, HOST_CPU_LOAD_INFO, $0, &n) }
+        }
+        guard kr == KERN_SUCCESS else { return nil }
+        return [s.cpu_ticks.0, s.cpu_ticks.1, s.cpu_ticks.2, s.cpu_ticks.3]
+    }
+
+    /// Kernel memory pressure (1 normal, 2 warning, 4 critical). A full-looking ring is normal on macOS; pressure is what matters.
+    static func pressure() -> Severity {
+        var v: Int32 = 0
+        var n = MemoryLayout<Int32>.size
+        guard sysctlbyname("kern.memorystatus_vm_pressure_level", &v, &n, nil, 0) == 0 else { return .normal }
+        return v >= 4 ? .critical : (v >= 2 ? .warning : .normal)
     }
 }
 
@@ -37,6 +87,12 @@ enum GlassStyle: String, CaseIterable {
     var title: String { rawValue.capitalized }
     var material: NSVisualEffectView.Material { self == .frosted ? .fullScreenUI : .hudWindow }
     var alpha: CGFloat { switch self { case .clear: return 0.55; case .glass: return 0.80; case .frosted: return 0.72 } }
+}
+
+struct HistoryPoint: Equatable {
+    let cpu: Double, mem: Double
+    static let interval: TimeInterval = 5
+    static let slots = 120   // 10 minutes
 }
 
 enum Severity {
@@ -59,6 +115,7 @@ final class UsageStore: ObservableObject {
     private var timer: Timer?
 
     func start() {
+        guard provider != .system else { return }   // sampled only while its panel is showing; see setSampling
         refresh()
         timer = Timer.scheduledTimer(withTimeInterval: 300, repeats: true) { _ in
             Task { @MainActor in self.refresh() }
@@ -70,8 +127,71 @@ final class UsageStore: ObservableObject {
     private var backoff: TimeInterval = 300
     private var inFlight = false
 
+    // System panel: kernel samples at 2 Hz while the panel is shown, every 5 s while hidden (history only).
+    private var sampler: Timer?
+    private var fast: Bool?
+    private var lastTicks: [UInt32]?
+    private var cpu: Double = 0
+    /// One point per 5 s, newest last, capped at 10 minutes.
+    @Published var history: [HistoryPoint] = []
+    private var bucketTicks: [UInt32]?
+    private var bucketStart = Date.distantPast
+
+    func setSampling(_ on: Bool) {
+        guard provider == .system, on != fast else { return }
+        fast = on
+        sampler?.invalidate()
+        sample()
+        let t = Timer(timeInterval: on ? 0.5 : HistoryPoint.interval, repeats: true) { _ in Task { @MainActor in self.sample() } }
+        t.tolerance = on ? 0.05 : 1
+        RunLoop.main.add(t, forMode: .common)   // keeps ticking while a menu is open or the widget is dragged
+        sampler = t
+    }
+
+    static func busyPercent(_ now: [UInt32], since then: [UInt32]) -> Double? {
+        let d = zip(now, then).map { Double($0 &- $1) }   // tick counters wrap
+        let total = d.reduce(0, +)
+        return total > 0 ? (total - d[2]) / total * 100 : nil
+    }
+
+    private func sample() {
+        let ticks = SystemStats.cpuTicks()
+        if let ticks {
+            if let l = lastTicks, let v = Self.busyPercent(ticks, since: l) { cpu = v }
+            lastTicks = ticks
+        }
+        let m = SystemStats.memory()
+        let memPercent = m.map { $0.total > 0 ? $0.used / $0.total * 100 : 0 }
+
+        // History: CPU averaged over the whole 5 s bucket, memory as it stands.
+        let now = Date()
+        if now.timeIntervalSince(bucketStart) >= HistoryPoint.interval - 0.3 {
+            let avg = ticks.flatMap { t in bucketTicks.flatMap { Self.busyPercent(t, since: $0) } } ?? cpu
+            history.append(HistoryPoint(cpu: avg, mem: memPercent ?? 0))
+            if history.count > HistoryPoint.slots { history.removeFirst(history.count - HistoryPoint.slots) }
+            bucketTicks = ticks; bucketStart = now
+        }
+        guard fast == true else { return }   // hidden: nothing to draw
+
+        var out: [Limit] = []
+        if let m, m.total > 0 {
+            let gb = 1_073_741_824.0
+            let total = m.total / gb
+            let totalText = total == total.rounded() ? String(Int(total)) : String(format: "%.1f", total)
+            var l = Limit(id: "memory", label: "Memory", percent: memPercent ?? 0, resetsAt: nil,
+                          detail: String(format: "%.1f/%@ GB", m.used / gb, totalText))
+            l.level = SystemStats.pressure()
+            out.append(l)
+        }
+        var load = [Double](repeating: 0, count: 1)
+        let haveLoad = getloadavg(&load, 1) == 1
+        out.append(Limit(id: "cpu", label: "CPU", percent: cpu, resetsAt: nil,
+                         detail: haveLoad ? String(format: "load %.2f", load[0]) : nil))
+        if out != limits { limits = out }
+    }
+
     func refresh() {
-        guard !inFlight, Date() >= nextAllowed else { return }
+        guard provider != .system, !inFlight, Date() >= nextAllowed else { return }
         inFlight = true
         let provider = self.provider
         Task.detached {
@@ -144,6 +264,8 @@ final class UsageStore: ObservableObject {
             req.setValue("Bearer \(tok)", forHTTPHeaderField: "Authorization")
             if let account { req.setValue(account, forHTTPHeaderField: "ChatGPT-Account-Id") }
             req.setValue("codex_cli_rs", forHTTPHeaderField: "User-Agent")
+        case .system:
+            return .success([])   // never fetched; sampled locally
         }
         req.timeoutInterval = 15
         let (status, body, retryAfter) = send(req)
@@ -274,7 +396,7 @@ struct Ring: View {
     @State private var shown: Double = 0   // drawn fraction; animates up from 0 when the ring appears
 
     var body: some View {
-        let sev = Severity(limit.percent)
+        let sev = limit.level ?? Severity(limit.percent)
         let frac = min(max(limit.percent / 100, 0), 1)
         let color = sev.color(provider)
         VStack(spacing: 5) {
@@ -312,8 +434,9 @@ struct Ring: View {
                     .foregroundStyle(.primary)
                     .lineLimit(1)
             }
-            Text(resetText(limit.resetsAt, now: now))
+            Text(limit.detail ?? resetText(limit.resetsAt, now: now))
                 .font(.system(size: 10))
+                .lineLimit(1)
                 .monospacedDigit()
                 .foregroundStyle(.secondary)
         }
@@ -322,11 +445,68 @@ struct Ring: View {
             withAnimation(.spring(response: 0.9, dampingFraction: 0.82).delay(0.12 + delay)) { shown = frac }
         }
         .onChange(of: frac) { v in
-            withAnimation(.spring(response: 0.6, dampingFraction: 0.85)) { shown = v }
+            // Live readings snap: animating the ring on every sample cost ~9% CPU when measured; snapping costs ~2%.
+            if provider == .system { shown = v } else { withAnimation(.spring(response: 0.6, dampingFraction: 0.85)) { shown = v } }
         }
         .help("\(limit.label): \(Int(limit.percent.rounded()))% used\(limit.resetsAt.map { " · resets \($0.formatted(date: .abbreviated, time: .shortened))" } ?? "")")
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(provider.name) \(limit.label), \(Int(limit.percent.rounded())) percent used, resets in \(resetText(limit.resetsAt, now: now))")
+        .accessibilityLabel("\(provider.name) \(limit.label), \(Int(limit.percent.rounded())) percent used, \(limit.detail ?? "resets in \(resetText(limit.resetsAt, now: now))")")
+    }
+}
+
+/// A 0–100% series drawn right-aligned on a fixed 10-minute axis, so the line grows in from the right as history fills.
+struct Spark: Shape {
+    let values: [Double]
+    var filled = false
+    func path(in rect: CGRect) -> Path {
+        var p = Path()
+        guard values.count > 1 else { return p }
+        let step = rect.width / CGFloat(HistoryPoint.slots - 1)
+        let pts = values.enumerated().map { i, v in
+            CGPoint(x: rect.maxX - CGFloat(values.count - 1 - i) * step,
+                    y: rect.maxY - 1 - CGFloat(min(max(v, 0), 100) / 100) * (rect.height - 2))
+        }
+        p.addLines(pts)
+        if filled {
+            p.addLine(to: CGPoint(x: pts[pts.count - 1].x, y: rect.maxY))
+            p.addLine(to: CGPoint(x: pts[0].x, y: rect.maxY))
+            p.closeSubpath()
+        }
+        return p
+    }
+}
+
+/// Past 10 minutes of CPU (accent line + fill) and memory (neutral line). Equatable so it only redraws when a point is added.
+struct HistoryGraph: View, Equatable {
+    let points: [HistoryPoint]
+    let color: Color
+    var body: some View {
+        let box = RoundedRectangle(cornerRadius: 7, style: .continuous)
+        VStack(spacing: 4) {
+            ZStack {
+                box.fill(Color.primary.opacity(0.05))
+                Spark(values: points.map(\.cpu), filled: true)
+                    .fill(LinearGradient(colors: [color.opacity(0.32), color.opacity(0.02)], startPoint: .top, endPoint: .bottom))
+                Spark(values: points.map(\.mem))
+                    .stroke(Color.primary.opacity(0.5), style: StrokeStyle(lineWidth: 1, lineCap: .round, lineJoin: .round))
+                Spark(values: points.map(\.cpu))
+                    .stroke(color, style: StrokeStyle(lineWidth: 1.25, lineCap: .round, lineJoin: .round))
+            }
+            .frame(height: 36)
+            .clipShape(box)
+            HStack(spacing: 4) {
+                Circle().fill(color).frame(width: 5, height: 5)
+                Text("CPU")
+                Circle().fill(Color.primary.opacity(0.5)).frame(width: 5, height: 5).padding(.leading, 5)
+                Text("Memory")
+                Spacer(minLength: 8)
+                Text("10 min").foregroundStyle(.tertiary)
+            }
+            .font(.system(size: 9, weight: .medium))
+            .foregroundStyle(.secondary)
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("CPU and memory over the past 10 minutes")
     }
 }
 
@@ -360,6 +540,9 @@ struct ProviderContent: View {
                             Ring(limit: l, now: now, provider: p, delay: Double(i) * 0.06)
                         }
                     }
+                    if p == .system {
+                        HistoryGraph(points: store.history, color: p.brand).equatable()
+                    }
                     if let e = store.error {
                         Text(e).font(.system(size: 9)).foregroundStyle(.secondary)
                     }
@@ -386,7 +569,7 @@ struct ProviderContent: View {
 @MainActor
 final class AppState: ObservableObject {
     @Published var selected: Provider
-    let stores: [Provider: UsageStore] = [.claude: UsageStore(.claude), .codex: UsageStore(.codex)]
+    let stores: [Provider: UsageStore] = [.claude: UsageStore(.claude), .codex: UsageStore(.codex), .system: UsageStore(.system)]
     init(selected: Provider) { self.selected = selected }
     var current: UsageStore { stores[selected]! }
 }
@@ -422,7 +605,35 @@ struct WidgetView: View {
     }
 }
 
+/// Reads Caps Lock (set == nil) or forces it on/off. Used to undo the flip that ⌘⇪ causes.
+@discardableResult
+func capsLock(_ set: Bool? = nil) -> Bool? {
+    let service = IOServiceGetMatchingService(kIOMainPortDefault, IOServiceMatching(kIOHIDSystemClass))
+    guard service != 0 else { return nil }
+    defer { IOObjectRelease(service) }
+    var conn: io_connect_t = 0
+    guard IOServiceOpen(service, mach_task_self_, UInt32(kIOHIDParamConnectType), &conn) == KERN_SUCCESS else { return nil }
+    defer { IOServiceClose(conn) }
+    if let set { return IOHIDSetModifierLockState(conn, Int32(kIOHIDCapsLockState), set) == KERN_SUCCESS ? set : nil }
+    var on = false
+    return IOHIDGetModifierLockState(conn, Int32(kIOHIDCapsLockState), &on) == KERN_SUCCESS ? on : nil
+}
+
+/// The always-on memory + CPU panel, pinned separately from the usage widget.
+struct SystemView: View {
+    let store: UsageStore
+    var body: some View {
+        ZStack {
+            GlassBackground()
+            ProviderContent(store: store, now: Date())
+            GlassRim()
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
 let panelRadius: CGFloat = 24
+let deskSwitchID = "local.caleb.deskswitch"
 
 /// Liquid Glass imitation for macOS 15: tint + top sheen over the native blur.
 struct GlassBackground: View {
@@ -525,15 +736,69 @@ final class VisualEffectHost: NSView {
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     let defaults = UserDefaults.standard
-    lazy var state = AppState(selected: Provider(rawValue: defaults.string(forKey: "provider") ?? "") ?? .claude)
+    lazy var state = AppState(selected: defaults.string(forKey: "provider") == "codex" ? .codex : .claude)
     var panel: FloatingPanel!
+    var systemPanel: FloatingPanel!
     var host: InteractiveHostingView<WidgetView>!
-    let blur = NSVisualEffectView()
+    var blurs: [NSVisualEffectView] = []
+    var statusItem: NSStatusItem!
+    private var lastHotkey = Date.distantPast
     private var animatingUntil = Date.distantPast
 
     func applicationDidFinishLaunching(_ n: Notification) {
         guard Installer.ensureInstalled() else { return }   // relaunching from ~/Applications
-        panel = FloatingPanel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+        host = InteractiveHostingView(rootView: WidgetView(state: state))
+        host.onClick = { [weak self] in self?.toggle() }
+        panel = makePanel(host)
+        systemPanel = makePanel(InteractiveHostingView(rootView: SystemView(store: state.stores[.system]!)))
+        applyGlass(GlassStyle(rawValue: defaults.string(forKey: "glass") ?? "") ?? .glass)
+
+        for (p, key) in [(panel!, "topLeft"), (systemPanel!, "systemTopLeft")] {
+            NotificationCenter.default.addObserver(forName: NSWindow.didMoveNotification, object: p, queue: .main) { _ in
+                Task { @MainActor in
+                    guard p.isVisible else { return }
+                    self.defaults.set([p.frame.minX, p.frame.maxY], forKey: key)
+                }
+            }
+        }
+
+        state.stores.values.forEach { $0.start() }
+        panel.setContentSize(measure(state.selected))
+        if let tl = defaults.array(forKey: "topLeft") as? [CGFloat], tl.count == 2 {
+            panel.setFrameTopLeftPoint(NSPoint(x: tl[0], y: tl[1]))
+        } else if let s = NSScreen.main?.visibleFrame {
+            panel.setFrameTopLeftPoint(NSPoint(x: s.maxX - panel.frame.width - 20, y: s.maxY - 20))
+        }
+        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+        if let b = statusItem.button {
+            b.image = NSImage(systemSymbolName: "circle.circle", accessibilityDescription: "Headroom")
+            b.toolTip = "Click to show/hide the widgets (⌘⇪) · Right-click to choose which"
+            b.target = self; b.action = #selector(statusClicked)
+            b.sendAction(on: [.leftMouseUp, .rightMouseUp])
+        }
+        state.stores[.system]!.setSampling(false)   // history collects from launch, shown or not
+        setVisible(usage: defaults.object(forKey: "showUsage") as? Bool ?? true,
+                   system: defaults.object(forKey: "showSystem") as? Bool ?? true)
+        installHotkey()
+        // Keep the Desk Switch button in step, including when it starts after us at login.
+        postDesk()
+        NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didLaunchApplicationNotification, object: nil, queue: .main) { n in
+            guard (n.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication)?.bundleIdentifier == deskSwitchID else { return }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { MainActor.assumeIsolated { self.postDesk() } }
+        }
+
+        NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { _ in
+            Task { @MainActor in self.state.stores.values.forEach { $0.refresh() } }
+        }
+        // Follow content size as limits load / appear / disappear.
+        Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { _ in
+            Task { @MainActor in if Date() > self.animatingUntil { self.resize(to: self.measure(self.state.selected), animated: true) } }
+        }
+    }
+
+    /// A borderless always-on-top glass panel hosting `host`: blur underneath, SwiftUI on top.
+    func makePanel<V: View>(_ host: InteractiveHostingView<V>) -> FloatingPanel {
+        let panel = FloatingPanel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         panel.level = .floating
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
         panel.isOpaque = false
@@ -546,17 +811,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let fx = VisualEffectHost()
         // Blur sits in its own layer at reduced alpha so the desktop reads through more clearly;
         // the rings stay at full opacity above it.
+        let blur = NSVisualEffectView()
         blur.blendingMode = .behindWindow
         blur.state = .active
-        applyGlass(GlassStyle(rawValue: defaults.string(forKey: "glass") ?? "") ?? .glass)
         blur.maskImage = glassMask()
         blur.frame = fx.bounds
         blur.autoresizingMask = [.width, .height]
         fx.addSubview(blur)
+        blurs.append(blur)
         fx.onRightClick = { [weak self] e in self?.showMenu(e) }
-
-        host = InteractiveHostingView(rootView: WidgetView(state: state))
-        host.onClick = { [weak self] in self?.toggle() }
         host.onRightClick = { [weak self] e in self?.showMenu(e) }
         host.translatesAutoresizingMaskIntoConstraints = false
         fx.addSubview(host)
@@ -567,30 +830,109 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             host.bottomAnchor.constraint(equalTo: fx.bottomAnchor),
         ])
         panel.contentView = fx
+        return panel
+    }
 
-        NotificationCenter.default.addObserver(forName: NSWindow.didMoveNotification, object: panel, queue: .main) { _ in
-            Task { @MainActor in
-                let f = self.panel.frame
-                self.defaults.set([f.minX, f.maxY], forKey: "topLeft")
-            }
+    /// Show or hide the memory + CPU panel; while hidden it only keeps the history going (one sample per 5 s).
+    func setSystemVisible(_ on: Bool) {
+        state.stores[.system]!.setSampling(on)
+        guard on else { systemPanel.orderOut(nil); return }
+        systemPanel.setContentSize(measure(.system))
+        if let tl = defaults.array(forKey: "systemTopLeft") as? [CGFloat], tl.count == 2 {
+            systemPanel.setFrameTopLeftPoint(NSPoint(x: tl[0], y: tl[1]))
+        } else {
+            // First run: directly under the usage widget, or above it when there's no room below.
+            // The widget may still be in its short loading state, so assume it will grow to ring height.
+            let f = panel.frame, h = systemPanel.frame.height
+            let below = f.maxY - max(f.height, 144) - 10   // 144 = the widget's height once its rings load
+            let floor = (panel.screen ?? NSScreen.main)?.visibleFrame.minY ?? 0
+            systemPanel.setFrameTopLeftPoint(NSPoint(x: f.minX, y: below - h >= floor ? below : f.maxY + 10 + h))
         }
+        systemPanel.orderFrontRegardless()
+    }
 
-        state.stores.values.forEach { $0.start() }
-        panel.setContentSize(measure(state.selected))
-        if let tl = defaults.array(forKey: "topLeft") as? [CGFloat], tl.count == 2 {
-            panel.setFrameTopLeftPoint(NSPoint(x: tl[0], y: tl[1]))
-        } else if let s = NSScreen.main?.visibleFrame {
-            panel.setFrameTopLeftPoint(NSPoint(x: s.maxX - panel.frame.width - 20, y: s.maxY - 20))
-        }
-        panel.orderFrontRegardless()
+    // MARK: Show / hide
 
-        NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { _ in
-            Task { @MainActor in self.state.stores.values.forEach { $0.refresh() } }
+    // Desk Switch is a separate app with its own floating button; it follows a distributed notification from us.
+    var deskRunning: Bool { !NSRunningApplication.runningApplications(withBundleIdentifier: deskSwitchID).isEmpty }
+    var deskWanted: Bool { defaults.object(forKey: "showDesk") as? Bool ?? true }
+    var deskShown: Bool { deskRunning && deskWanted }
+    func postDesk() {
+        DistributedNotificationCenter.default().postNotificationName(
+            .init("local.usagerings.visibility.desk"), object: deskWanted ? "show" : "hide", userInfo: nil, deliverImmediately: true)
+    }
+
+    /// Show exactly these panels (desk: nil leaves the Desk Switch button alone); the choice survives relaunch.
+    func setVisible(usage: Bool, system: Bool, desk: Bool? = nil) {
+        if usage != panel.isVisible { if usage { panel.orderFrontRegardless() } else { panel.orderOut(nil) } }
+        if system != systemPanel.isVisible { setSystemVisible(system) }
+        defaults.set(usage, forKey: "showUsage")
+        defaults.set(system, forKey: "showSystem")
+        if let desk { defaults.set(desk, forKey: "showDesk"); postDesk() }
+        statusItem.button?.appearsDisabled = !(usage || system || deskShown)
+    }
+
+    /// Menu-bar button and ⌘⇪: hide whatever is showing, or bring back the set that was showing before.
+    @objc func toggleAll() {
+        let u = panel.isVisible, s = systemPanel.isVisible, d = deskShown
+        if u || s || d {
+            defaults.set([u, s, d], forKey: "lastShown")
+            setVisible(usage: false, system: false, desk: deskRunning ? false : nil)
+        } else {
+            let last = defaults.array(forKey: "lastShown") as? [Bool] ?? []
+            var show = [last.count > 0 ? last[0] : true, last.count > 1 ? last[1] : true, last.count > 2 ? last[2] : true]
+            if !(show[0] || show[1] || (deskRunning && show[2])) { show = [true, true, true] }   // never restore to nothing
+            setVisible(usage: show[0], system: show[1], desk: deskRunning ? show[2] : nil)
         }
-        // Follow content size as limits load / appear / disappear.
-        Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { _ in
-            Task { @MainActor in if Date() > self.animatingUntil { self.resize(to: self.measure(self.state.selected), animated: true) } }
+    }
+    @objc func toggleUsage() { setVisible(usage: !panel.isVisible, system: systemPanel.isVisible) }
+    @objc func toggleSystem() { setVisible(usage: panel.isVisible, system: !systemPanel.isVisible) }
+    @objc func toggleDesk() { setVisible(usage: panel.isVisible, system: systemPanel.isVisible, desk: !deskShown) }
+
+    func addVisibilityItems(_ m: NSMenu) {
+        let any = panel.isVisible || systemPanel.isVisible || deskShown
+        m.addItem(withTitle: "\(any ? "Hide" : "Show") Widgets   ⌘⇪", action: #selector(toggleAll), keyEquivalent: "").target = self
+        for (title, sel, on) in [("Claude / Codex Usage", #selector(toggleUsage), panel.isVisible),
+                                 ("System Monitor", #selector(toggleSystem), systemPanel.isVisible)] {
+            let i = NSMenuItem(title: title, action: sel, keyEquivalent: "")
+            i.target = self; i.state = on ? .on : .off
+            m.addItem(i)
         }
+        if deskRunning {
+            let i = NSMenuItem(title: "Desk Switch Button", action: #selector(toggleDesk), keyEquivalent: "")
+            i.target = self; i.state = deskShown ? .on : .off
+            m.addItem(i)
+        }
+    }
+
+    @objc func statusClicked() {
+        let e = NSApp.currentEvent
+        guard e?.type == .rightMouseUp || e?.modifierFlags.contains(.control) == true else { toggleAll(); return }
+        let m = NSMenu()
+        addVisibilityItems(m)
+        m.addItem(.separator())
+        m.addItem(withTitle: "Quit Headroom", action: #selector(quit), keyEquivalent: "").target = self
+        statusItem.menu = m
+        statusItem.button?.performClick(nil)
+        statusItem.menu = nil   // so a plain click toggles again
+    }
+
+    /// ⌘ + Caps Lock from any app. Modifier-only events reach a global monitor without Accessibility permission.
+    func installHotkey() {
+        let handle: (NSEvent) -> Void = { [weak self] e in
+            guard e.keyCode == 57,   // the physical Caps Lock key; our own state restore reports 255
+                  e.modifierFlags.intersection(.deviceIndependentFlagsMask).subtracting(.capsLock) == .command else { return }
+            Task { @MainActor in self?.hotkey() }
+        }
+        NSEvent.addGlobalMonitorForEvents(matching: .flagsChanged, handler: handle)
+        NSEvent.addLocalMonitorForEvents(matching: .flagsChanged) { handle($0); return $0 }
+    }
+
+    func hotkey() {
+        guard Date().timeIntervalSince(lastHotkey) > 0.4 else { return }   // one toggle per press
+        lastHotkey = Date()
+        if let on = capsLock() { capsLock(!on) }   // the press just flipped Caps Lock; put it back
+        toggleAll()
     }
 
     /// Size the given provider's content wants, measured off-screen.
@@ -631,14 +973,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func showMenu(_ e: NSEvent) {
         let m = NSMenu()
-        if let u = state.current.updated {
+        let sys = e.window === systemPanel   // the System panel has no provider to switch or refresh
+        let target: Provider = sys ? .system : state.selected
+        if !sys, let u = state.current.updated {
             let i = NSMenuItem(title: "\(state.selected.name) · updated \(u.formatted(date: .omitted, time: .shortened))", action: nil, keyEquivalent: "")
             i.isEnabled = false
             m.addItem(i)
             m.addItem(.separator())
         }
-        m.addItem(withTitle: "Show \(state.selected.other.name)", action: #selector(toggleFromMenu), keyEquivalent: "").target = self
-        m.addItem(withTitle: "Refresh Now", action: #selector(refresh), keyEquivalent: "r").target = self
+        if !sys {
+            m.addItem(withTitle: "Show \(state.selected.other.name)", action: #selector(toggleFromMenu), keyEquivalent: "").target = self
+            m.addItem(withTitle: "Refresh Now", action: #selector(refresh), keyEquivalent: "r").target = self
+            m.addItem(.separator())
+        }
+        addVisibilityItems(m)
+        m.addItem(.separator())
         let op = NSMenuItem(title: "Opacity", action: nil, keyEquivalent: "")
         let sub = NSMenu()
         for v in [1.0, 0.85, 0.7, 0.5] {
@@ -660,18 +1009,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         gl.submenu = gsub
         m.addItem(gl)
-        m.addItem(withTitle: "Open \(state.selected.name) Usage Page", action: #selector(openUsage), keyEquivalent: "").target = self
+        let open = NSMenuItem(title: target.usageTitle, action: #selector(openUsage(_:)), keyEquivalent: "")
+        open.target = self; open.representedObject = target.rawValue
+        m.addItem(open)
         m.addItem(.separator())
         m.addItem(withTitle: "Uninstall Headroom…", action: #selector(uninstall), keyEquivalent: "").target = self
         m.addItem(withTitle: "Quit", action: #selector(quit), keyEquivalent: "q").target = self
-        NSMenu.popUpContextMenu(m, with: e, for: panel.contentView!)
+        NSMenu.popUpContextMenu(m, with: e, for: e.window?.contentView ?? panel.contentView!)
     }
 
     @objc func toggleFromMenu() { toggle() }
+
     @objc func refresh() { state.current.refresh() }
     @objc func setOpacity(_ s: NSMenuItem) {
         let v = s.representedObject as! Double
         panel.alphaValue = v
+        systemPanel.alphaValue = v
         defaults.set(v, forKey: "opacity")
     }
     @objc func setGlass(_ s: NSMenuItem) {
@@ -680,10 +1033,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         defaults.set(g.rawValue, forKey: "glass")
     }
     func applyGlass(_ g: GlassStyle) {
-        blur.material = g.material
-        blur.alphaValue = g.alpha
+        for blur in blurs { blur.material = g.material; blur.alphaValue = g.alpha }
     }
-    @objc func openUsage() { NSWorkspace.shared.open(state.selected.usageURL) }
+    @objc func openUsage(_ s: NSMenuItem) {
+        NSWorkspace.shared.open((Provider(rawValue: s.representedObject as? String ?? "") ?? state.selected).usageURL)
+    }
     @objc func quit() { NSApp.terminate(nil) }
     @objc func uninstall() {
         let a = NSAlert()

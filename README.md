@@ -2,7 +2,7 @@
 
 <p align="center"><img src="docs/widget.png" width="720" alt="Headroom widget showing Claude and Codex usage rings"></p>
 
-A small floating macOS and Windows widget that shows how much of your **Claude Code** and **Codex** plan limits you've used — session and weekly — as rings. Refreshes every 5 minutes and turns red past 90%.
+A small floating macOS and Windows widget that shows how much of your **Claude Code** and **Codex** plan limits you've used — session and weekly — as rings. Refreshes every 5 minutes and turns red past 90%. On Mac, a second panel shows **memory and CPU** live, updated twice a second.
 
 
 > **Unofficial.** Not affiliated with Anthropic or OpenAI. It reads the same usage endpoints the official tools use, which aren't public APIs — they can change at any time and break this.
@@ -28,6 +28,8 @@ The script ([read it here](install.sh)) downloads the latest release, and the ap
 ### Using it
 
 - **Click** the widget to switch between Claude and Codex
+- The **System** panel (memory + CPU, with a graph of the past 10 minutes) floats separately; drag it anywhere
+- **⌘ + Caps Lock**, or a click on the menu-bar icon, hides/shows the widgets; right-click the icon (or a widget) to choose which ones appear
 - **Drag** to move it anywhere
 - **Right-click** for Refresh, Opacity, Glass (Clear · Glass · Frosted), the usage page, and Quit
 
