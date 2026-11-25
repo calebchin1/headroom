@@ -1,6 +1,6 @@
 // Headroom for Windows: floating widget showing Claude Code and Codex plan usage as rings.
 // Written in C# 5 so it compiles with the csc.exe that ships with .NET Framework 4.x on every
-// Windows 10/11 machine; install.ps1 compiles it in place. No XAML, no NuGet, no SDK.
+// Windows 10/11 machine; windows/build.ps1 compiles it with the C# compiler built into Windows. No XAML, no NuGet, no SDK.
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -23,7 +23,7 @@ using System.Windows.Threading;
 using Microsoft.Win32;
 
 [assembly: System.Reflection.AssemblyTitle("Headroom")]
-[assembly: System.Reflection.AssemblyVersion("1.5.0.0")]
+[assembly: System.Reflection.AssemblyVersion("1.8.0.0")]
 
 namespace Headroom
 {
@@ -329,12 +329,33 @@ namespace Headroom
         {
             using (var k = Registry.CurrentUser.CreateSubKey(KeyPath)) k.SetValue(name, value);
         }
+        const string RunPath = @"Software\Microsoft\Windows\CurrentVersion\Run";
+
+        /// "Start at Login" (on by default, toggled from the menu): a per-user Run entry pointing at wherever this exe lives.
+        public static bool StartAtLogin
+        {
+            get { return Get("startAtLogin") != "0"; }
+            set
+            {
+                Set("startAtLogin", value ? "1" : "0");
+                try
+                {
+                    using (var k = Registry.CurrentUser.CreateSubKey(RunPath))
+                    {
+                        if (value) k.SetValue("Headroom", "\"" + Process.GetCurrentProcess().MainModule.FileName + "\"");
+                        else k.DeleteValue("Headroom", false);
+                    }
+                }
+                catch { }
+            }
+        }
+
         public static void DeleteAll()
         {
             try { Registry.CurrentUser.DeleteSubKeyTree(KeyPath, false); } catch { }
             try
             {
-                using (var k = Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run", true))
+                using (var k = Registry.CurrentUser.OpenSubKey(RunPath, true))
                     if (k != null) k.DeleteValue("Headroom", false);
             }
             catch { }
@@ -629,6 +650,9 @@ namespace Headroom
                 try { Process.Start(new ProcessStartInfo(P.UsageUrl(selected)) { UseShellExecute = true }); } catch { }
             });
             m.Items.Add(new Separator());
+            var login = new MenuItem { Header = "Start at Login", IsCheckable = true, IsChecked = Settings.StartAtLogin };
+            login.Click += (s, e) => Settings.StartAtLogin = login.IsChecked;
+            m.Items.Add(login);
             Add(m, "Uninstall Headroom…", Uninstall);
             Add(m, "Quit", () => Application.Current.Shutdown());
             m.PlacementTarget = root;
@@ -644,21 +668,13 @@ namespace Headroom
 
         void Uninstall()
         {
-            var r = MessageBox.Show(this, "Removes the app, its startup entry and its settings.", "Uninstall Headroom?",
-                                    MessageBoxButton.OKCancel, MessageBoxImage.Question);
+            var exe = Process.GetCurrentProcess().MainModule.FileName;
+            var r = MessageBox.Show(this, "Removes Headroom's startup entry and settings, then quits.\n\nAfterwards, delete this file to finish:\n" + exe,
+                                    "Uninstall Headroom?", MessageBoxButton.OKCancel, MessageBoxImage.Question);
             if (r != MessageBoxResult.OK) return;
             Settings.DeleteAll();
-            var dir = AppDomain.CurrentDomain.BaseDirectory.TrimEnd('\\');
-            // Can't delete our own running exe; a hidden cmd does it once we've exited.
-            if (System.IO.Path.GetFileName(dir).Equals("Headroom", StringComparison.OrdinalIgnoreCase))
-            {
-                try
-                {
-                    Process.Start(new ProcessStartInfo("cmd.exe", "/c timeout /t 2 /nobreak >nul & rmdir /s /q \"" + dir + "\"")
-                    { CreateNoWindow = true, UseShellExecute = false, WindowStyle = ProcessWindowStyle.Hidden });
-                }
-                catch { }
-            }
+            // Show the exe in Explorer so it can be deleted; we can't delete ourselves while running.
+            try { Process.Start("explorer.exe", "/select,\"" + exe + "\""); } catch { }
             Application.Current.Shutdown();
         }
 
@@ -683,6 +699,8 @@ namespace Headroom
             using (var mutex = new Mutex(true, @"Local\Headroom", out fresh))
             {
                 if (!fresh) return;
+                // Re-point the startup entry at this exe (covers first run and the file being moved).
+                if (Settings.StartAtLogin) Settings.StartAtLogin = true;
                 var app = new Application { ShutdownMode = ShutdownMode.OnMainWindowClose };
                 app.DispatcherUnhandledException += (s, e) => { e.Handled = true; };
                 app.Run(new Widget());

@@ -1,23 +1,27 @@
-# Smoke test for the Windows build: runs the real installer on a Windows VM, checks the
-# widget is still alive after a few seconds, and screenshots it with demo data.
+# Builds the Windows app. On a push it smoke-tests the build (runs it with demo data, checks it stays up,
+# screenshots it). When a release is published it attaches Headroom.exe to that release.
 name: windows
 on:
   push:
-    paths: ['install.ps1', 'windows/**', '.github/workflows/windows.yml']
+    paths: ['windows/**', '.github/workflows/windows.yml']
+  release:
+    types: [published]
   workflow_dispatch:
+permissions:
+  contents: write
 jobs:
-  smoke:
+  build:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Install, check it stays up, screenshot
+      - name: Build
+        shell: powershell
+        run: .\windows\build.ps1 -Out Headroom.exe
+      - name: Run with demo data, check it stays up, screenshot
         shell: powershell
         run: |
-          $env:HEADROOM_SRC = "$pwd\windows\Headroom.cs"
           $env:HEADROOM_DEMO = "$pwd\windows\demo"
-          .\install.ps1
-          if (-not (Test-Path "$env:LOCALAPPDATA\Headroom\Headroom.exe")) { throw 'exe not built' }
-          if (-not (Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run').Headroom) { throw 'no startup entry' }
+          Start-Process .\Headroom.exe
           Start-Sleep 8
           if (-not (Get-Process Headroom -ErrorAction SilentlyContinue)) { throw 'Headroom exited' }
           Add-Type -AssemblyName System.Windows.Forms, System.Drawing
@@ -25,6 +29,12 @@ jobs:
           $bmp = New-Object System.Drawing.Bitmap $b.Width, $b.Height
           [System.Drawing.Graphics]::FromImage($bmp).CopyFromScreen($b.Location, [System.Drawing.Point]::Empty, $b.Size)
           $bmp.Save("$pwd\screen.png")
+          Stop-Process -Name Headroom
       - if: always()
         uses: actions/upload-artifact@v4
         with: { name: screenshot, path: screen.png }
+      - name: Attach Headroom.exe to the release
+        if: github.event_name == 'release'
+        shell: powershell
+        env: { GH_TOKEN: '${{ github.token }}' }
+        run: gh release upload "${{ github.event.release.tag_name }}" Headroom.exe --clobber

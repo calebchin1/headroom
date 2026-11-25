@@ -44,15 +44,12 @@ Right-click the widget → **Uninstall Headroom…**
 
 ## Install on Windows
 
-Press <kbd>Win</kbd>, type **PowerShell**, press <kbd>Enter</kbd>, then paste this and press <kbd>Enter</kbd>:
+1. [Download Headroom.exe](https://github.com/calebchin1/headroom/releases/latest/download/Headroom.exe) and put it wherever you like to keep apps.
+2. Double-click it. Windows will show "Windows protected your PC" the first time because the app isn't code-signed: click **More info → Run anyway**.
 
-```powershell
-irm https://raw.githubusercontent.com/calebchin1/headroom/main/install.ps1 | iex
-```
+The widget appears in the top-right and starts when you log in (turn that off with right-click → **Start at Login**). No installer and no admin rights. The `.exe` is built by GitHub Actions straight from [the source](windows/Headroom.cs) for each release, so you can check exactly what it runs.
 
-The widget appears in the top-right and starts automatically when you log in. The script ([read it here](install.ps1)) downloads [the source](windows/Headroom.cs) and builds it with the C# compiler that comes with Windows, so there's no `.exe` download and no SmartScreen prompt. It installs to `%LOCALAPPDATA%\Headroom`. No admin needed.
-
-Click, drag and right-click work the same as on Mac. The Windows version doesn't have the Opacity or Glass menus yet. To uninstall, right-click → **Uninstall Headroom…**
+Click, drag and right-click work the same as on Mac. The Windows version doesn't have the Opacity or Glass menus yet. To uninstall, right-click → **Uninstall Headroom…**, then delete `Headroom.exe`.
 
 ## Requirements
 
@@ -60,9 +57,27 @@ Click, drag and right-click work the same as on Mac. The Windows version doesn't
 - **Claude Code** logged in with a Claude.ai Pro/Max plan, and/or **Codex** logged in with ChatGPT
 - API-key logins have no plan limits, so there's nothing to show
 
-## Privacy
+## Security & privacy
 
-Your login never leaves your computer except to go to Anthropic or OpenAI. The app reuses the token Claude Code stores in your Keychain (`Claude Code-credentials`, or `%USERPROFILE%\.claude\.credentials.json` on Windows) and the one Codex stores in `~/.codex/auth.json`, sends it over HTTPS to that provider's usage endpoint, and nothing else. No analytics, no other servers. macOS may ask once to allow Keychain access.
+Headroom is small and has nothing hidden. Everything it does is in [Headroom.swift](Headroom.swift) (Mac) and [windows/Headroom.cs](windows/Headroom.cs) (Windows).
+
+**What it reads**
+- The login token Claude Code already saved on your computer: the `Claude Code-credentials` Keychain item on Mac (macOS asks once before allowing it), or `%USERPROFILE%\.claude\.credentials.json` on Windows.
+- The login token Codex already saved, in `~/.codex/auth.json`.
+
+It never asks for your password and never stores its own copy of a token.
+
+**Where it connects**
+- `api.anthropic.com`, to fetch your Claude usage.
+- `chatgpt.com`, to fetch your Codex usage.
+
+That's it. Each token only goes, over HTTPS, to the company that issued it. There are no analytics, no update checks and no servers of ours.
+
+**What it changes on your computer**
+- **Mac:** copies itself to `~/Applications/Headroom.app`, adds a login item at `~/Library/LaunchAgents/local.usagerings.plist`, and saves widget position and settings in its preferences.
+- **Windows:** adds a `Headroom` startup entry under `HKCU\...\CurrentVersion\Run` (unless you turn off Start at Login), and saves settings under `HKCU\Software\Headroom`.
+
+**Uninstall** (right-click → Uninstall Headroom…) removes all of the above. On Windows, delete `Headroom.exe` afterwards.
 
 ## Build from source
 
@@ -72,6 +87,8 @@ Needs the Xcode Command Line Tools (`xcode-select --install`).
 ./build.sh        # build universal app and launch it (it installs itself)
 ./build.sh dist   # build dist/Headroom.zip for sharing
 ```
+
+On Windows, `.\windows\build.ps1` builds `Headroom.exe` with the C# compiler that comes with Windows.
 
 ## License
 
